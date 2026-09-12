@@ -1,0 +1,5 @@
+Django>=4.2,<5.1
+djangorestframework>=3.14
+django-cors-headers>=4.3
+# PostgreSQL 支持（默认使用 SQLite，无需安装；USE_POSTGRES=1 时需要）
+psycopg2-binary>=2.9
