@@ -11,6 +11,8 @@ const MAP = {
   done: ["已完成", "green"],
   abnormal: ["有异常", "red"],
   missed: ["漏检", "purple"],
+  // 任务类型
+  recheck: ["补检", "purple"],
   // 异常单状态
   open: ["待派单", "orange"],
   dispatched: ["已派单", "blue"],

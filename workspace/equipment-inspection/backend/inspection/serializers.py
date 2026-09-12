@@ -92,6 +92,10 @@ class TaskListSerializer(serializers.ModelSerializer):
     equipment_status = serializers.CharField(source="equipment.status", read_only=True)
     shift_name = serializers.CharField(source="shift.name", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    kind_display = serializers.CharField(source="get_kind_display", read_only=True)
+    source_task_no = serializers.CharField(
+        source="source.task_no", read_only=True, default=None
+    )
     abnormal_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -107,6 +111,10 @@ class TaskListSerializer(serializers.ModelSerializer):
             "shift",
             "shift_name",
             "task_date",
+            "kind",
+            "kind_display",
+            "source",
+            "source_task_no",
             "status",
             "status_display",
             "inspector",

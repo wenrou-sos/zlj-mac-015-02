@@ -57,6 +57,7 @@ export const api = {
     method: "POST",
     body: JSON.stringify(payload),
   }),
+  recheckTask: (id) => request(`/tasks/${id}/recheck/`, { method: "POST" }),
 
   abnormals: (params = {}) => request(`/abnormals/${toQuery(params)}`),
   createAbnormal: (payload) => request(`/abnormals/`, {

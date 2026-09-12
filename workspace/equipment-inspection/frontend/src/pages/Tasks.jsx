@@ -17,6 +17,7 @@ const STATUS_OPTIONS = [
   ["in_progress", "点检中"],
   ["done", "已完成"],
   ["abnormal", "有异常"],
+  ["missed", "漏检"],
 ];
 
 export default function Tasks() {
@@ -31,6 +32,16 @@ export default function Tasks() {
 
   const load = () =>
     api.tasks({ date, shift, status }).then(setTasks).catch(console.error);
+
+  const recheck = async (t) => {
+    try {
+      const created = await api.recheckTask(t.id);
+      toast(`已生成补检任务 ${created.task_no}`);
+      load();
+    } catch (e) {
+      toast(e.message, "err");
+    }
+  };
 
   useEffect(() => {
     api.shifts().then(setShifts).catch(console.error);
@@ -86,7 +97,15 @@ export default function Tasks() {
             <tbody>
               {tasks.map((t) => (
                 <tr key={t.id}>
-                  <td>{t.task_no}</td>
+                  <td>
+                    {t.task_no}
+                    {t.kind === "recheck" && (
+                      <>
+                        {" "}
+                        <Badge value="recheck" />
+                      </>
+                    )}
+                  </td>
                   <td>{t.equipment_code} {t.equipment_name}</td>
                   <td>{t.shift_name}</td>
                   <td><Badge value={t.equipment_status} /></td>
@@ -94,7 +113,11 @@ export default function Tasks() {
                   <td><Badge value={t.status} /></td>
                   <td>{t.abnormal_count > 0 ? `${t.abnormal_count} 条` : "—"}</td>
                   <td>
-                    {t.status === "pending" || t.status === "in_progress" ? (
+                    {t.status === "missed" ? (
+                      <button className="small" onClick={() => recheck(t)}>
+                        生成补检
+                      </button>
+                    ) : t.status === "pending" || t.status === "in_progress" ? (
                       <button className="small" onClick={() => setInspectTask(t)}>
                         执行点检
                       </button>

@@ -1,6 +1,20 @@
+from datetime import datetime, timedelta
+
 from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.utils import timezone
+
+
+def shift_end_at(shift, task_date):
+    """班次在 task_date 的结束时刻；结束时间不晚于开始时间视为跨天，顺延到次日"""
+    end_date = task_date
+    if shift.end_time <= shift.start_time:
+        end_date += timedelta(days=1)
+    return timezone.make_aware(
+        datetime.combine(end_date, shift.end_time),
+        timezone.get_current_timezone(),
+    )
 
 
 class Equipment(models.Model):
@@ -83,6 +97,10 @@ class Task(models.Model):
         ABNORMAL = "abnormal", "有异常"
         MISSED = "missed", "漏检"
 
+    class Kind(models.TextChoices):
+        NORMAL = "normal", "常规"
+        RECHECK = "recheck", "补检"
+
     task_no = models.CharField("任务单号", max_length=64, unique=True, blank=True)
     equipment = models.ForeignKey(
         Equipment, verbose_name="设备", on_delete=models.PROTECT, related_name="tasks"
@@ -91,6 +109,17 @@ class Task(models.Model):
         Shift, verbose_name="班次", on_delete=models.PROTECT, related_name="tasks"
     )
     task_date = models.DateField("点检日期")
+    kind = models.CharField(
+        "任务类型", max_length=8, choices=Kind.choices, default=Kind.NORMAL
+    )
+    source = models.ForeignKey(
+        "self",
+        verbose_name="补检来源任务",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rechecks",
+    )
     status = models.CharField(
         "状态", max_length=16, choices=Status.choices, default=Status.PENDING
     )
@@ -106,13 +135,47 @@ class Task(models.Model):
         ordering = ["-task_date", "shift__start_time", "equipment__code"]
         constraints = [
             models.UniqueConstraint(
-                fields=["equipment", "shift", "task_date"],
-                name="uniq_equipment_shift_date",
+                fields=["equipment", "shift", "task_date", "kind"],
+                name="uniq_equipment_shift_date_kind",
             )
         ]
 
     def __str__(self):
         return self.task_no or f"Task#{self.pk}"
+
+    def shift_end_at(self):
+        """本任务班次的结束时刻（跨天班次顺延到次日）"""
+        return shift_end_at(self.shift, self.task_date)
+
+    @classmethod
+    def next_schedulable_date(cls, shift, now=None):
+        """该班次最近一次尚未结束的班次日：今天还没结束取今天，否则取明天"""
+        now = now or timezone.now()
+        day = timezone.localdate()
+        if shift_end_at(shift, day) <= now:
+            day += timedelta(days=1)
+        return day
+
+    @classmethod
+    def mark_overdue_missed(cls, now=None):
+        """班次结束仍未提交（待点检/点检中）的任务落为漏检，返回更新条数。
+
+        已提交（已完成/有异常）及已漏检的任务不受影响。
+        """
+        now = now or timezone.now()
+        overdue_ids = [
+            task.pk
+            for task in cls.objects.filter(
+                status__in=[cls.Status.PENDING, cls.Status.IN_PROGRESS]
+            ).select_related("shift")
+            if task.shift_end_at() <= now
+        ]
+        if not overdue_ids:
+            return 0
+        return cls.objects.filter(
+            pk__in=overdue_ids,
+            status__in=[cls.Status.PENDING, cls.Status.IN_PROGRESS],
+        ).update(status=cls.Status.MISSED)
 
 
 class Reading(models.Model):
@@ -285,12 +348,16 @@ class DowntimeEvent(models.Model):
 def set_task_no(sender, instance, created, **kwargs):
     if created and not instance.task_no:
         # 班次段用开班时间、尾段用设备编号，均为业务标识而非自增主键，
-        # 保证 (设备, 班次, 日期) 唯一的前提下，重建数据后单号保持稳定
-        instance.task_no = (
+        # 保证 (设备, 班次, 日期, 类型) 唯一的前提下，重建数据后单号保持稳定；
+        # 补检任务加 -B 后缀，与同日同班次的常规任务区分开
+        task_no = (
             f"T{instance.task_date:%Y%m%d}"
             f"-S{instance.shift.start_time:%H%M}"
             f"-{instance.equipment.code}"
         )
+        if instance.kind == Task.Kind.RECHECK:
+            task_no += "-B"
+        instance.task_no = task_no
         instance.save(update_fields=["task_no"])
 
 

@@ -72,6 +72,7 @@ export default function Dashboard() {
               ["点检中", t.in_progress, "#1677ff"],
               ["已完成", t.done, "#52c41a"],
               ["有异常", t.abnormal, "#ff4d4f"],
+              ["漏检", t.missed, "#722ed1"],
             ]}
             total={t.total}
           />

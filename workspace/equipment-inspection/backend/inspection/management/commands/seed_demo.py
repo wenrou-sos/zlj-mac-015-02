@@ -304,7 +304,8 @@ class Command(BaseCommand):
                 continue
             for shift in shifts[1:]:
                 Task.objects.get_or_create(
-                    equipment=eq, shift=shift, task_date=today
+                    equipment=eq, shift=shift, task_date=today,
+                    kind=Task.Kind.NORMAL,
                 )
 
         self.stdout.write(

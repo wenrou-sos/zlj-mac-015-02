@@ -122,6 +122,9 @@ class TaskViewSet(viewsets.ModelViewSet):
         return TaskListSerializer
 
     def get_queryset(self):
+        if self.action == "list":
+            # 惰性落判：班次结束仍未提交的任务先置为漏检再返回列表
+            Task.mark_overdue_missed()
         qs = super().get_queryset()
         task_date = self.request.query_params.get("date")
         shift_id = self.request.query_params.get("shift")
@@ -176,7 +179,10 @@ class TaskViewSet(viewsets.ModelViewSet):
         for shift in shifts:
             for equipment in equipment_qs:
                 task, was_created = Task.objects.get_or_create(
-                    equipment=equipment, shift=shift, task_date=task_date
+                    equipment=equipment,
+                    shift=shift,
+                    task_date=task_date,
+                    kind=Task.Kind.NORMAL,
                 )
                 (created if was_created else skipped).append(task.task_no)
 
@@ -187,6 +193,38 @@ class TaskViewSet(viewsets.ModelViewSet):
                 "skipped_count": len(skipped),
                 "created": created,
             }
+        )
+
+    @action(detail=True, methods=["post"])
+    def recheck(self, request, pk=None):
+        """为漏检任务生成补检任务：同设备、同班次，日期取该班次下一个尚未结束的班次日"""
+        missed = self.get_object()
+        if missed.status != Task.Status.MISSED:
+            return Response(
+                {"detail": "只有漏检任务可以生成补检任务"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        task_date = Task.next_schedulable_date(missed.shift)
+        if Task.objects.filter(
+            equipment=missed.equipment,
+            shift=missed.shift,
+            task_date=task_date,
+            kind=Task.Kind.RECHECK,
+        ).exists():
+            return Response(
+                {"detail": f"该设备{missed.shift.name}{task_date}的补检任务已存在"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        task = Task.objects.create(
+            equipment=missed.equipment,
+            shift=missed.shift,
+            task_date=task_date,
+            kind=Task.Kind.RECHECK,
+            source=missed,
+            remark=f"补检 {missed.task_no}（{missed.task_date} {missed.shift.name}）",
+        )
+        return Response(
+            TaskListSerializer(task).data, status=status.HTTP_201_CREATED
         )
 
     @action(detail=True, methods=["post"])
@@ -414,6 +452,8 @@ class DowntimeEventViewSet(viewsets.ReadOnlyModelViewSet):
 
 class DashboardView(viewsets.ViewSet):
     def list(self, request):
+        # 先看板统计前把过期未提交的任务落为漏检
+        Task.mark_overdue_missed()
         today = timezone.localdate()
         equipment_qs = Equipment.objects.all()
         equipment_by_status = {
