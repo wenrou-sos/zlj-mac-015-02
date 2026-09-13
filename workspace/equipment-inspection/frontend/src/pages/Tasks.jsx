@@ -114,9 +114,15 @@ export default function Tasks() {
                   <td>{t.abnormal_count > 0 ? `${t.abnormal_count} 条` : "—"}</td>
                   <td>
                     {t.status === "missed" ? (
-                      <button className="small" onClick={() => recheck(t)}>
-                        生成补检
-                      </button>
+                      t.has_recheck ? (
+                        <button className="small secondary" disabled>
+                          已生成补检
+                        </button>
+                      ) : (
+                        <button className="small" onClick={() => recheck(t)}>
+                          生成补检
+                        </button>
+                      )
                     ) : t.status === "pending" || t.status === "in_progress" ? (
                       <button className="small" onClick={() => setInspectTask(t)}>
                         执行点检
@@ -168,12 +174,32 @@ export default function Tasks() {
   );
 }
 
+// 班次在指定日期是否已结束（结束时间不晚于开始时间视为跨天，顺延到次日）
+const shiftEnded = (s, dateStr) => {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [sh, sm] = s.start_time.slice(0, 5).split(":").map(Number);
+  const [eh, em] = s.end_time.slice(0, 5).split(":").map(Number);
+  const end = new Date(y, m - 1, d, eh, em);
+  if (eh * 60 + em <= sh * 60 + sm) end.setDate(end.getDate() + 1);
+  return end <= new Date();
+};
+const openShiftIds = (shifts, dateStr) =>
+  shifts.filter((s) => !shiftEnded(s, dateStr)).map((s) => s.id);
+
 function GenerateModal({ date: initialDate, shifts, onClose, onDone }) {
   const toast = useToast();
   const [date, setDate] = useState(initialDate);
-  const [shiftIds, setShiftIds] = useState(() => new Set([shifts[0]?.id]));
+  // 默认勾选所选日期尚未结束的班次；已结束的班次生成后会立刻落漏检
+  const [shiftIds, setShiftIds] = useState(
+    () => new Set(openShiftIds(shifts, initialDate))
+  );
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+
+  const changeDate = (v) => {
+    setDate(v);
+    setShiftIds(new Set(openShiftIds(shifts, v)));
+  };
 
   const toggle = (id) => {
     const next = new Set(shiftIds);
@@ -212,31 +238,44 @@ function GenerateModal({ date: initialDate, shifts, onClose, onDone }) {
       <div className="form-grid">
         <label className="field">
           点检日期
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input type="date" value={date} onChange={(e) => changeDate(e.target.value)} />
         </label>
         <div className="field">
           班次（可多选）
           <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-            {shifts.map((s) => (
-              <button
-                type="button"
-                key={s.id}
-                className={`small ${shiftIds.has(s.id) ? "" : "secondary"}`}
-                onClick={() => toggle(s.id)}
-              >
-                {s.name}
-              </button>
-            ))}
+            {shifts.map((s) => {
+              const ended = shiftEnded(s, date);
+              return (
+                <button
+                  type="button"
+                  key={s.id}
+                  disabled={ended}
+                  title={ended ? "该班次已结束，生成后会立即落为漏检" : ""}
+                  className={`small ${shiftIds.has(s.id) ? "" : "secondary"}`}
+                  onClick={() => toggle(s.id)}
+                >
+                  {s.name}
+                  {ended ? "（已结束）" : ""}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
       <p className="muted" style={{ marginTop: 14, marginBottom: 0 }}>
-        将为所有非停机/维修中的设备逐台生成任务；同设备、同班次、同日期已存在任务时自动跳过（可重复生成）。
+        将为所有非停机/维修中的设备逐台生成任务；同设备、同班次、同日期已存在任务时自动跳过（可重复生成）；已结束的班次不生成。
       </p>
       {result && (
-        <p style={{ color: "var(--ok)" }}>
-          新生成 {result.created_count} 个任务，跳过已存在 {result.skipped_count} 个。
-        </p>
+        <>
+          <p style={{ color: "var(--ok)", marginBottom: 0 }}>
+            新生成 {result.created_count} 个任务，跳过已存在 {result.skipped_count} 个。
+          </p>
+          {result.ended_shifts?.length > 0 && (
+            <p className="muted" style={{ marginBottom: 0 }}>
+              已结束班次未生成：{result.ended_shifts.join("、")}
+            </p>
+          )}
+        </>
       )}
     </Modal>
   );

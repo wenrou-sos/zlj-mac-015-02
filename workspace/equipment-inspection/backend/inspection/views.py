@@ -14,6 +14,7 @@ from .models import (
     Shift,
     Task,
     WorkOrder,
+    shift_end_at,
 )
 from .serializers import (
     AbnormalReportSerializer,
@@ -167,6 +168,15 @@ class TaskViewSet(viewsets.ModelViewSet):
         else:
             shifts = Shift.objects.all()
 
+        # 已结束的班次不再生成任务（生成即漏检没有意义），在响应中告知
+        now = timezone.now()
+        active_shifts, ended_shifts = [], []
+        for shift in shifts:
+            if shift_end_at(shift, task_date) <= now:
+                ended_shifts.append(shift.name)
+            else:
+                active_shifts.append(shift)
+
         # 停机/维修中的设备不安排点检
         equipment_qs = Equipment.objects.exclude(
             status__in=[Equipment.Status.DOWN, Equipment.Status.MAINTENANCE]
@@ -176,7 +186,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             equipment_qs = equipment_qs.filter(id__in=equipment_ids)
 
         created, skipped = [], []
-        for shift in shifts:
+        for shift in active_shifts:
             for equipment in equipment_qs:
                 task, was_created = Task.objects.get_or_create(
                     equipment=equipment,
@@ -192,6 +202,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 "created_count": len(created),
                 "skipped_count": len(skipped),
                 "created": created,
+                "ended_shifts": ended_shifts,
             }
         )
 
@@ -202,6 +213,18 @@ class TaskViewSet(viewsets.ModelViewSet):
         if missed.status != Task.Status.MISSED:
             return Response(
                 {"detail": "只有漏检任务可以生成补检任务"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # 停机/维修中的设备无法点检，补检生成后只会再次漏检
+        if missed.equipment.status in (
+            Equipment.Status.DOWN,
+            Equipment.Status.MAINTENANCE,
+        ):
+            return Response(
+                {
+                    "detail": f"设备当前{missed.equipment.get_status_display()}，"
+                    "复机后再生成补检任务"
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         task_date = Task.next_schedulable_date(missed.shift)

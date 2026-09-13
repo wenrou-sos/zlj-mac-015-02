@@ -96,6 +96,7 @@ class TaskListSerializer(serializers.ModelSerializer):
     source_task_no = serializers.CharField(
         source="source.task_no", read_only=True, default=None
     )
+    has_recheck = serializers.SerializerMethodField()
     abnormal_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -115,6 +116,7 @@ class TaskListSerializer(serializers.ModelSerializer):
             "kind_display",
             "source",
             "source_task_no",
+            "has_recheck",
             "status",
             "status_display",
             "inspector",
@@ -123,6 +125,17 @@ class TaskListSerializer(serializers.ModelSerializer):
             "started_at",
             "finished_at",
         ]
+
+    def get_has_recheck(self, obj):
+        """漏检任务是否已有对应补检（与 recheck 接口的防重判断同一口径）"""
+        if obj.status != Task.Status.MISSED:
+            return False
+        return Task.objects.filter(
+            equipment_id=obj.equipment_id,
+            shift_id=obj.shift_id,
+            task_date=Task.next_schedulable_date(obj.shift),
+            kind=Task.Kind.RECHECK,
+        ).exists()
 
     def get_abnormal_count(self, obj):
         return obj.abnormals.count()
