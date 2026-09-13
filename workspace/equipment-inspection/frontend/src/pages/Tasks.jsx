@@ -174,14 +174,16 @@ export default function Tasks() {
   );
 }
 
-// 班次在指定日期是否已结束（结束时间不晚于开始时间视为跨天，顺延到次日）
+// 班次结束前不足该分钟数时不再生成新任务（与后端 SCHEDULE_CUTOFF_MINUTES 一致）
+const SCHEDULE_CUTOFF_MINUTES = 30;
+// 班次在指定日期是否已结束或临近结束（结束时间不晚于开始时间视为跨天，顺延到次日）
 const shiftEnded = (s, dateStr) => {
   const [y, m, d] = dateStr.split("-").map(Number);
   const [sh, sm] = s.start_time.slice(0, 5).split(":").map(Number);
   const [eh, em] = s.end_time.slice(0, 5).split(":").map(Number);
   const end = new Date(y, m - 1, d, eh, em);
   if (eh * 60 + em <= sh * 60 + sm) end.setDate(end.getDate() + 1);
-  return end <= new Date();
+  return end <= new Date(Date.now() + SCHEDULE_CUTOFF_MINUTES * 60000);
 };
 const openShiftIds = (shifts, dateStr) =>
   shifts.filter((s) => !shiftEnded(s, dateStr)).map((s) => s.id);
@@ -250,7 +252,7 @@ function GenerateModal({ date: initialDate, shifts, onClose, onDone }) {
                   type="button"
                   key={s.id}
                   disabled={ended}
-                  title={ended ? "该班次已结束，生成后会立即落为漏检" : ""}
+                  title={ended ? `该班次已结束或临近结束（${SCHEDULE_CUTOFF_MINUTES} 分钟内），生成后会很快落为漏检` : ""}
                   className={`small ${shiftIds.has(s.id) ? "" : "secondary"}`}
                   onClick={() => toggle(s.id)}
                 >
@@ -263,7 +265,7 @@ function GenerateModal({ date: initialDate, shifts, onClose, onDone }) {
         </div>
       </div>
       <p className="muted" style={{ marginTop: 14, marginBottom: 0 }}>
-        将为所有非停机/维修中的设备逐台生成任务；同设备、同班次、同日期已存在任务时自动跳过（可重复生成）；已结束的班次不生成。
+        将为所有非停机/维修中的设备逐台生成任务；同设备、同班次、同日期已存在任务时自动跳过（可重复生成）；已结束或临近结束（{SCHEDULE_CUTOFF_MINUTES} 分钟内）的班次不生成。
       </p>
       {result && (
         <>

@@ -14,7 +14,7 @@ from .models import (
     Shift,
     Task,
     WorkOrder,
-    shift_end_at,
+    shift_open_for_scheduling,
 )
 from .serializers import (
     AbnormalReportSerializer,
@@ -70,12 +70,22 @@ class EquipmentViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def resume(self, request, pk=None):
-        """复机确认：确认人登记后恢复运行"""
+        """复机确认：确认人登记后恢复运行（有未完工工单时不允许复机）"""
         equipment = self.get_object()
         event = equipment.downtimes.filter(resumed_at__isnull=True).first()
         if not event:
             return Response(
                 {"detail": "该设备没有进行中的停机记录"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # 工单未完工（已派单/维修中）时复机会造成「运行中 + 工单维修中」的矛盾状态
+        blocking = equipment.work_orders.filter(
+            status__in=[WorkOrder.Status.ASSIGNED, WorkOrder.Status.REPAIRING]
+        )
+        if blocking.exists():
+            nos = "、".join(blocking.values_list("order_no", flat=True))
+            return Response(
+                {"detail": f"设备还有未完工的维修工单（{nos}），完工后才能复机"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         confirm_by = (request.data.get("confirm_by") or "").strip()
@@ -168,14 +178,13 @@ class TaskViewSet(viewsets.ModelViewSet):
         else:
             shifts = Shift.objects.all()
 
-        # 已结束的班次不再生成任务（生成即漏检没有意义），在响应中告知
-        now = timezone.now()
+        # 已结束或临近结束（不足截止缓冲）的班次不再生成任务，在响应中告知
         active_shifts, ended_shifts = [], []
         for shift in shifts:
-            if shift_end_at(shift, task_date) <= now:
-                ended_shifts.append(shift.name)
-            else:
+            if shift_open_for_scheduling(shift, task_date):
                 active_shifts.append(shift)
+            else:
+                ended_shifts.append(shift.name)
 
         # 停机/维修中的设备不安排点检
         equipment_qs = Equipment.objects.exclude(
@@ -407,6 +416,16 @@ class AbnormalReportViewSet(viewsets.ModelViewSet):
         report.save(
             update_fields=["status", "voided_by", "void_reason", "voided_at"]
         )
+
+        # 原点检任务若已没有未作废的异常报告，从「有异常」回到「已完成」
+        task = report.task
+        if task and task.status == Task.Status.ABNORMAL:
+            still_abnormal = task.abnormals.exclude(
+                status=AbnormalReport.Status.VOIDED
+            ).exists()
+            if not still_abnormal:
+                task.status = Task.Status.DONE
+                task.save(update_fields=["status"])
 
         # 无其它进行中工单、无未复机停机记录时，撤销派单对设备状态的改动
         # （派单只会把 运行中→维修中，恢复即其逆操作）

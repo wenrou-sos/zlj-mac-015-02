@@ -17,6 +17,17 @@ def shift_end_at(shift, task_date):
     )
 
 
+# 班次结束前不足该分钟数时，不再生成新任务/补检（避免建完立刻落漏检）
+SCHEDULE_CUTOFF_MINUTES = 30
+
+
+def shift_open_for_scheduling(shift, task_date, now=None):
+    """班次在 task_date 是否还来得及安排新任务（结束时刻前留出截止缓冲）"""
+    now = now or timezone.now()
+    cutoff = now + timedelta(minutes=SCHEDULE_CUTOFF_MINUTES)
+    return shift_end_at(shift, task_date) > cutoff
+
+
 class Equipment(models.Model):
     """生产设备台账"""
 
@@ -149,10 +160,9 @@ class Task(models.Model):
 
     @classmethod
     def next_schedulable_date(cls, shift, now=None):
-        """该班次最近一次尚未结束的班次日：今天还没结束取今天，否则取明天"""
-        now = now or timezone.now()
+        """该班次最近一次仍来得及安排的班次日：今天还来得及取今天，否则取明天"""
         day = timezone.localdate()
-        if shift_end_at(shift, day) <= now:
+        if not shift_open_for_scheduling(shift, day, now):
             day += timedelta(days=1)
         return day
 
