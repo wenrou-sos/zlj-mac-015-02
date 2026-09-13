@@ -10,6 +10,7 @@ const STATUS_OPTIONS = [
   ["repairing", "维修中"],
   ["done", "已完成"],
   ["accepted", "已验收"],
+  ["cancelled", "已作废"],
 ];
 
 export default function WorkOrders() {

@@ -220,6 +220,7 @@ class AbnormalReport(models.Model):
         DISPATCHED = "dispatched", "已派单"
         RESOLVED = "resolved", "已处理"
         CLOSED = "closed", "已关闭"
+        VOIDED = "voided", "已作废"
 
     report_no = models.CharField("异常单号", max_length=32, unique=True, blank=True)
     task = models.ForeignKey(
@@ -256,6 +257,10 @@ class AbnormalReport(models.Model):
     )
     reporter = models.CharField("上报人", max_length=32, blank=True)
     reported_at = models.DateTimeField("上报时间", auto_now_add=True)
+    # 作废留痕：只登记不物理删除
+    voided_by = models.CharField("作废人", max_length=32, blank=True)
+    void_reason = models.TextField("作废原因", blank=True)
+    voided_at = models.DateTimeField("作废时间", null=True, blank=True)
 
     class Meta:
         verbose_name = "异常报告"
@@ -274,6 +279,7 @@ class WorkOrder(models.Model):
         REPAIRING = "repairing", "维修中"
         DONE = "done", "已完成"
         ACCEPTED = "accepted", "已验收"
+        CANCELLED = "cancelled", "已作废"
 
     order_no = models.CharField("工单号", max_length=32, unique=True, blank=True)
     abnormal = models.OneToOneField(

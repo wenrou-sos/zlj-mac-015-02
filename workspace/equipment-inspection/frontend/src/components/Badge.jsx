@@ -18,10 +18,12 @@ const MAP = {
   dispatched: ["已派单", "blue"],
   resolved: ["已处理", "green"],
   closed: ["已关闭", "gray"],
+  voided: ["已作废", "gray"],
   // 工单状态
   assigned: ["已派单", "blue"],
   repairing: ["维修中", "orange"],
   accepted: ["已验收", "green"],
+  cancelled: ["已作废", "gray"],
   // 严重程度
   low: ["一般", "gray"],
   high: ["严重", "orange"],

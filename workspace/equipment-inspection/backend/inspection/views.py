@@ -354,11 +354,88 @@ class AbnormalReportViewSet(viewsets.ModelViewSet):
             qs = qs.filter(equipment_id=equipment_id)
         return qs
 
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def void(self, request, pk=None):
+        """作废误报：登记作废人/原因/时间留痕（不物理删除），连带作废工单；
+        设备没有其它进行中工单、也没有未复机停机记录时，恢复设备状态"""
+        report = self.get_object()
+        if report.status in (
+            AbnormalReport.Status.CLOSED,
+            AbnormalReport.Status.VOIDED,
+        ):
+            return Response(
+                {"detail": f"报告当前状态为{report.get_status_display()}，不能作废"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        voided_by = (request.data.get("voided_by") or "").strip()
+        if not voided_by:
+            return Response(
+                {"detail": "请填写作废人"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        void_reason = (request.data.get("void_reason") or "").strip()
+        if not void_reason:
+            return Response(
+                {"detail": "请填写作废原因"}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        equipment = report.equipment
+        # 边界：设备还有在修工单或进行中停机时不能作废
+        if equipment.work_orders.filter(
+            status=WorkOrder.Status.REPAIRING
+        ).exists():
+            return Response(
+                {"detail": "设备还有维修中的工单，不能作废"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if equipment.downtimes.filter(resumed_at__isnull=True).exists():
+            return Response(
+                {"detail": "设备有未复机的停机记录，请先到设备台账完成复机确认"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 连带作废未验收的工单
+        order = getattr(report, "work_order", None)
+        if order and order.status != WorkOrder.Status.ACCEPTED:
+            order.status = WorkOrder.Status.CANCELLED
+            order.save(update_fields=["status"])
+
+        report.status = AbnormalReport.Status.VOIDED
+        report.voided_by = voided_by
+        report.void_reason = void_reason
+        report.voided_at = timezone.now()
+        report.save(
+            update_fields=["status", "voided_by", "void_reason", "voided_at"]
+        )
+
+        # 无其它进行中工单、无未复机停机记录时，撤销派单对设备状态的改动
+        # （派单只会把 运行中→维修中，恢复即其逆操作）
+        has_active_orders = equipment.work_orders.exclude(
+            status__in=[WorkOrder.Status.ACCEPTED, WorkOrder.Status.CANCELLED]
+        ).exists()
+        has_active_downtime = equipment.downtimes.filter(
+            resumed_at__isnull=True
+        ).exists()
+        if (
+            not has_active_orders
+            and not has_active_downtime
+            and equipment.status == Equipment.Status.MAINTENANCE
+        ):
+            equipment.status = Equipment.Status.RUNNING
+            equipment.save(update_fields=["status"])
+
+        return Response(AbnormalReportSerializer(report).data)
+
     @action(detail=True, methods=["post"], url_path="dispatch")
     @transaction.atomic
     def assign_order(self, request, pk=None):
         """维修派单：生成维修工单，设备转为维修中"""
         report = self.get_object()
+        if report.status != AbnormalReport.Status.OPEN:
+            return Response(
+                {"detail": f"报告当前状态为{report.get_status_display()}，不能派单"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if hasattr(report, "work_order"):
             return Response(
                 {"detail": "该异常已派单"}, status=status.HTTP_400_BAD_REQUEST
@@ -510,11 +587,15 @@ class DashboardView(viewsets.ViewSet):
                     "missed": tasks_by_status.get("missed", 0),
                 },
                 "open_abnormals": AbnormalReport.objects.exclude(
-                    status=AbnormalReport.Status.CLOSED
+                    status__in=[
+                        AbnormalReport.Status.CLOSED,
+                        AbnormalReport.Status.VOIDED,
+                    ]
                 ).count(),
                 "active_work_orders": WorkOrder.objects.exclude(
                     status__in=[
                         WorkOrder.Status.ACCEPTED,
+                        WorkOrder.Status.CANCELLED,
                     ]
                 ).count(),
                 "active_downtimes": active_downtimes.count(),

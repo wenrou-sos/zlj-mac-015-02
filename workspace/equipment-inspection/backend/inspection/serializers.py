@@ -177,6 +177,9 @@ class AbnormalReportSerializer(serializers.ModelSerializer):
             "status_display",
             "reporter",
             "reported_at",
+            "voided_by",
+            "void_reason",
+            "voided_at",
             "has_work_order",
             "work_order_id",
         ]

@@ -10,6 +10,7 @@ const STATUS_OPTIONS = [
   ["dispatched", "已派单"],
   ["resolved", "已处理"],
   ["closed", "已关闭"],
+  ["voided", "已作废"],
 ];
 
 export default function Abnormals() {
@@ -17,6 +18,7 @@ export default function Abnormals() {
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState("");
   const [dispatchTarget, setDispatchTarget] = useState(null);
+  const [voidTarget, setVoidTarget] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [detail, setDetail] = useState(null);
 
@@ -82,6 +84,14 @@ export default function Abnormals() {
                         派单维修
                       </button>
                     )}
+                    {r.status !== "closed" && r.status !== "voided" && (
+                      <button
+                        className="small secondary"
+                        onClick={() => setVoidTarget(r)}
+                      >
+                        作废
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -101,6 +111,17 @@ export default function Abnormals() {
             setDispatchTarget(null);
             load();
             toast("维修工单已派发");
+          }}
+        />
+      )}
+      {voidTarget && (
+        <VoidModal
+          report={voidTarget}
+          onClose={() => setVoidTarget(null)}
+          onDone={() => {
+            setVoidTarget(null);
+            load();
+            toast("异常报告已作废");
           }}
         />
       )}
@@ -125,6 +146,13 @@ export default function Abnormals() {
             <dt>状态</dt><dd><Badge value={detail.status} /></dd>
             <dt>上报人</dt><dd>{detail.reporter || "—"}</dd>
             <dt>异常现象</dt><dd style={{ whiteSpace: "pre-wrap" }}>{detail.phenomenon}</dd>
+            {detail.status === "voided" && (
+              <>
+                <dt>作废人</dt><dd>{detail.voided_by}</dd>
+                <dt>作废时间</dt><dd>{detail.voided_at?.replace("T", " ").slice(0, 16)}</dd>
+                <dt>作废原因</dt><dd style={{ whiteSpace: "pre-wrap" }}>{detail.void_reason}</dd>
+              </>
+            )}
           </dl>
         </Modal>
       )}
@@ -205,6 +233,64 @@ function DispatchModal({ report, onClose, onDone }) {
           )}
         </div>
       </div>
+    </Modal>
+  );
+}
+
+function VoidModal({ report, onClose, onDone }) {
+  const toast = useToast();
+  const [form, setForm] = useState({ voided_by: "", void_reason: "" });
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!form.voided_by.trim()) return toast("请填写作废人", "err");
+    if (!form.void_reason.trim()) return toast("请填写作废原因", "err");
+    setBusy(true);
+    try {
+      await api.voidAbnormal(report.id, form);
+      onDone();
+    } catch (e) {
+      toast(e.message, "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`作废异常报告 · ${report.report_no}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="secondary" onClick={onClose}>取消</button>
+          <button className="danger" onClick={submit} disabled={busy}>
+            {busy ? "提交中…" : "确认作废"}
+          </button>
+        </>
+      }
+    >
+      <div className="form-grid">
+        <label className="field">
+          作废人 *
+          <input
+            value={form.voided_by}
+            onChange={(e) => setForm({ ...form, voided_by: e.target.value })}
+            placeholder="登记作废操作人"
+          />
+        </label>
+        <label className="field full">
+          作废原因 *
+          <textarea
+            value={form.void_reason}
+            onChange={(e) => setForm({ ...form, void_reason: e.target.value })}
+            placeholder="如：点检误操作，实际参数在正常范围内，复核后确认误报"
+          />
+        </label>
+      </div>
+      <p className="muted" style={{ marginBottom: 0 }}>
+        作废后该单不再计入未关闭异常，关联工单同步作废；作废仅留痕，不会删除记录。
+        设备有维修中工单或未复机停机记录时不能作废。
+      </p>
     </Modal>
   );
 }

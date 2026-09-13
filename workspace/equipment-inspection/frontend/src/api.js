@@ -68,6 +68,10 @@ export const api = {
     method: "POST",
     body: JSON.stringify(payload),
   }),
+  voidAbnormal: (id, payload) => request(`/abnormals/${id}/void/`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
 
   workOrders: (params = {}) => request(`/work-orders/${toQuery(params)}`),
   startOrder: (id) => request(`/work-orders/${id}/start/`, { method: "POST" }),
